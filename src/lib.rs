@@ -1,12 +1,14 @@
 use clap::{App, Arg, SubCommand};
 use paho_mqtt as mqtt;
 use rand::seq::SliceRandom;
+use serde_derive::Serialize;
 
 use futures::Future;
+use std::error::Error;
 use std::process;
 
 pub trait Generator {
-    fn gen(&self) -> String;
+    fn gen(&self) -> Result<String, Box<dyn Error>>;
 }
 
 #[derive(Debug)]
@@ -28,17 +30,27 @@ impl IdEventGen {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct IdEventEntry {
+    id: String,
+    event: String,
+}
+
 impl Generator for IdEventGen {
-    fn gen(&self) -> String {
+    fn gen(&self) -> Result<String, Box<dyn Error>> {
         let id = match self.ids.choose(&mut rand::thread_rng()) {
             Some(v) => v.to_string(),
-            None => String::from("?")
+            None => String::from("?"),
         };
         let event = match self.events.choose(&mut rand::thread_rng()) {
             Some(v) => v.to_string(),
-            None => String::from("?")
+            None => String::from("?"),
         };
-        return String::from(format!("id,event\n{:},{:}\n", id, event));
+        let mut wtr = csv::Writer::from_writer(vec![]);
+        wtr.serialize(IdEventEntry { id, event })?;
+        let inner = wtr.into_inner()?;
+        let data = String::from_utf8(inner)?;
+        return Ok(data);
     }
 }
 
@@ -86,11 +98,11 @@ impl GenOpts {
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub enum GenError {
     Unk(String),
 }
 
-pub fn parse_args() -> Result<GenOpts, Error> {
+pub fn parse_args() -> Result<GenOpts, GenError> {
     let matches = App::new("datagen")
         .version("0.1")
         .author("Mariano Guerra <mariano@marianoguerra.org>")
@@ -168,11 +180,17 @@ pub fn gen(opts: GenOpts) {
     // Create a topic and publish to it
     let topic = mqtt::Topic::new(&cli, opts.topic, opts.qos);
     for _ in 0..5 {
-        let tok = topic.publish(opts.generator.gen());
-
-        if let Err(e) = tok.wait() {
-            println!("Error sending message: {:?}", e);
-            break;
+        match opts.generator.gen() {
+            Ok(data) => {
+                let tok = topic.publish(data);
+                if let Err(e) = tok.wait() {
+                    println!("Error sending message: {:?}", e);
+                    break;
+                }
+            }
+            Err(err) => {
+                eprintln!("Error generating data: {:?}", err);
+            }
         }
     }
 
