@@ -1,10 +1,47 @@
 use clap::{App, Arg, SubCommand};
 use paho_mqtt as mqtt;
+use rand::seq::SliceRandom;
 
 use futures::Future;
 use std::process;
 
+pub trait Generator {
+    fn gen(&self) -> String;
+}
+
 #[derive(Debug)]
+pub struct IdEventGen {
+    ids: Vec<String>,
+    events: Vec<String>,
+}
+
+impl IdEventGen {
+    pub fn new() -> IdEventGen {
+        IdEventGen {
+            ids: vec![
+                "door-1".to_string(),
+                "window-2".to_string(),
+                "access-1".to_string(),
+            ],
+            events: vec!["open".to_string(), "close".to_string(), "cross".to_string()],
+        }
+    }
+}
+
+impl Generator for IdEventGen {
+    fn gen(&self) -> String {
+        let id = match self.ids.choose(&mut rand::thread_rng()) {
+            Some(v) => v.to_string(),
+            None => String::from("?")
+        };
+        let event = match self.events.choose(&mut rand::thread_rng()) {
+            Some(v) => v.to_string(),
+            None => String::from("?")
+        };
+        return String::from(format!("id,event\n{:},{:}\n", id, event));
+    }
+}
+
 pub struct GenOpts {
     host: String,
     topic: String,
@@ -12,6 +49,7 @@ pub struct GenOpts {
     username: String,
     password: String,
     qos: i32,
+    generator: Box<dyn Generator>,
 }
 
 impl GenOpts {
@@ -23,17 +61,27 @@ impl GenOpts {
             authenticate: true,
             username: username.to_string(),
             password: password.to_string(),
+            generator: Box::new(IdEventGen::new()),
         }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("GenOpts: {:} {:} {:}", self.host, self.topic, self.username)
     }
 
     pub fn to_conn_opts(&self) -> mqtt::connect_options::ConnectOptions {
         let mut opts = mqtt::ConnectOptionsBuilder::new();
 
         if self.authenticate {
-            opts.user_name(self.username.to_string()).password(self.password.to_string());
+            opts.user_name(self.username.to_string())
+                .password(self.password.to_string());
         }
 
         return opts.finalize();
+    }
+
+    pub fn with_generator(&mut self, generator: Box<dyn Generator>) {
+        self.generator = generator;
     }
 }
 
@@ -103,7 +151,7 @@ pub fn parse_args() -> Result<GenOpts, Error> {
 }
 
 pub fn gen(opts: GenOpts) {
-    println!("mqtt-gen {:?}", opts);
+    println!("mqtt-gen {:}", opts.to_string());
     let conn_opts = opts.to_conn_opts();
 
     let cli = mqtt::AsyncClient::new(opts.host).unwrap_or_else(|err| {
@@ -120,7 +168,7 @@ pub fn gen(opts: GenOpts) {
     // Create a topic and publish to it
     let topic = mqtt::Topic::new(&cli, opts.topic, opts.qos);
     for _ in 0..5 {
-        let tok = topic.publish("Hello there");
+        let tok = topic.publish(opts.generator.gen());
 
         if let Err(e) = tok.wait() {
             println!("Error sending message: {:?}", e);
