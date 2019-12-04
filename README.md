@@ -62,6 +62,19 @@ datagen mqtt-gen -u mariano -p secret -t test -g counter -c resources/empty-conf
 datagen mqtt-gen -u mariano -p secret -t test -g counter -c resources/counter.toml
 ```
 
+## Tips
+
+To test you need an MQTT broker, we recommend: https://vernemq.com/
+
+Also a client to listen to published events, we recommend mosquitto-clients:
+
+```
+sudo apt install mosquitto-clients
+
+mosquitto_sub -h localhost -p 1883 -t test -u mariano -P secret
+```
+
+
 ## License
 
 MIT
