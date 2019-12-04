@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate clap;
 use clap::{App, Arg, SubCommand};
 use paho_mqtt as mqtt;
 use rand::seq::SliceRandom;
@@ -6,6 +8,8 @@ use serde_derive::Serialize;
 use futures::Future;
 use std::error::Error;
 use std::process;
+use std::thread;
+use std::time::Duration;
 
 pub trait Generator {
     fn gen(&self) -> Result<String, Box<dyn Error>>;
@@ -62,10 +66,17 @@ pub struct GenOpts {
     password: String,
     qos: i32,
     generator: Box<dyn Generator>,
+    sleep_interval: Duration,
 }
 
 impl GenOpts {
-    pub fn new(host: &str, topic: &str, username: &str, password: &str) -> GenOpts {
+    pub fn new(
+        host: &str,
+        topic: &str,
+        username: &str,
+        password: &str,
+        sleep_interval: Duration,
+    ) -> GenOpts {
         GenOpts {
             qos: 1,
             host: host.to_string(),
@@ -74,6 +85,7 @@ impl GenOpts {
             username: username.to_string(),
             password: password.to_string(),
             generator: Box::new(IdEventGen::new()),
+            sleep_interval: sleep_interval,
         }
     }
 
@@ -158,12 +170,22 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
     let topic = submatches.value_of("topic").unwrap_or("my-topic");
     let username = submatches.value_of("username").unwrap_or("myusername");
     let password = submatches.value_of("password").unwrap_or("mypassword");
+    let sleep_interval_ms = value_t!(submatches, "interval", u64).unwrap_or(500);
+    let sleep_interval = Duration::from_millis(sleep_interval_ms);
 
-    Ok(GenOpts::new(host, topic, username, password))
+    Ok(GenOpts::new(
+        host,
+        topic,
+        username,
+        password,
+        sleep_interval,
+    ))
 }
 
 pub fn gen(opts: GenOpts) {
     println!("mqtt-gen {:}", opts.to_string());
+    println!("Ctrl-c to quit");
+
     let conn_opts = opts.to_conn_opts();
 
     let cli = mqtt::AsyncClient::new(opts.host).unwrap_or_else(|err| {
@@ -179,7 +201,7 @@ pub fn gen(opts: GenOpts) {
 
     // Create a topic and publish to it
     let topic = mqtt::Topic::new(&cli, opts.topic, opts.qos);
-    for _ in 0..5 {
+    loop {
         match opts.generator.gen() {
             Ok(data) => {
                 let tok = topic.publish(data);
@@ -192,6 +214,8 @@ pub fn gen(opts: GenOpts) {
                 eprintln!("Error generating data: {:?}", err);
             }
         }
+
+        thread::sleep(opts.sleep_interval);
     }
 
     // Disconnect from the broker
