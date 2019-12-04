@@ -1,2 +1,5 @@
-ids = ["door-1", "window-2", "exit-5"]
-events = ["open", "close", "cross"]
+ids = ["Main Entrance", "Meeting Room",
+       "Elevator Floor 1", "Elevator Floor 2", "Elevator Floor 3",
+       "Stairs Floor 1", "Stairs Floor 2", "Stairs Floor 3"]
+events = ["Open", "Close", "Enter", "Leave"]
+format = "CSV"

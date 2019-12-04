@@ -3,6 +3,7 @@ extern crate clap;
 use clap::{App, Arg, SubCommand};
 use paho_mqtt as mqtt;
 use rand::seq::SliceRandom;
+use serde;
 use serde_derive::{Deserialize, Serialize};
 
 use futures::Future;
@@ -20,6 +21,7 @@ pub trait Generator {
 pub struct IdEventGen {
     ids: Vec<String>,
     events: Vec<String>,
+    format: Format,
 }
 
 impl IdEventGen {
@@ -31,6 +33,7 @@ impl IdEventGen {
                 "access-1".to_string(),
             ],
             events: vec!["open".to_string(), "close".to_string(), "cross".to_string()],
+            format: Format::CSV,
         }
     }
 
@@ -38,6 +41,7 @@ impl IdEventGen {
         Self {
             ids: config.ids,
             events: config.events,
+            format: config.format.unwrap_or(Format::CSV),
         }
     }
 
@@ -60,10 +64,26 @@ fn read_file(path: &str) -> io::Result<String> {
     return Ok(content);
 }
 
+#[derive(Debug, Deserialize)]
+enum Format {
+    CSV,
+    JSON,
+}
+
+impl Format {
+    fn serialize<T: serde::Serialize>(&self, v: T) -> Result<String, Box<dyn Error>> {
+        match self {
+            Format::CSV => serialize_to_csv(v),
+            Format::JSON => serialize_to_json(v),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct IdEventConfig {
     ids: Vec<String>,
     events: Vec<String>,
+    format: Option<Format>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,6 +91,17 @@ struct IdEventEntry {
     time: String,
     id: String,
     event: String,
+}
+
+fn serialize_to_csv<T: serde::Serialize>(v: T) -> Result<String, Box<dyn Error>> {
+    let mut wtr = csv::Writer::from_writer(vec![]);
+    wtr.serialize(v)?;
+    let inner = wtr.into_inner()?;
+    Ok(String::from_utf8(inner)?)
+}
+
+fn serialize_to_json<T: serde::Serialize>(v: T) -> Result<String, Box<dyn Error>> {
+    Ok(serde_json::to_string(&v)?)
 }
 
 impl Generator for IdEventGen {
@@ -83,36 +114,38 @@ impl Generator for IdEventGen {
             Some(v) => v.to_string(),
             None => String::from("?"),
         };
-        let mut wtr = csv::Writer::from_writer(vec![]);
-        wtr.serialize(IdEventEntry {
+        self.format.serialize(IdEventEntry {
             time: get_current_time_iso8601(),
             id,
             event,
-        })?;
-        let inner = wtr.into_inner()?;
-        let data = String::from_utf8(inner)?;
-        return Ok(data);
+        })
     }
 }
 
 #[derive(Debug)]
 pub struct CounterGen {
     count: u64,
+    format: Format,
 }
 
 #[derive(Deserialize)]
 struct CounterConfig {
     initial_count: Option<u64>,
+    format: Option<Format>,
 }
 
 impl CounterGen {
     pub fn new() -> Self {
-        CounterGen { count: 0 }
+        CounterGen {
+            count: 0,
+            format: Format::CSV,
+        }
     }
 
     fn from_config(config: CounterConfig) -> Self {
         Self {
             count: config.initial_count.unwrap_or(0),
+            format: config.format.unwrap_or(Format::CSV),
         }
     }
 
@@ -141,15 +174,14 @@ fn get_current_time_iso8601() -> String {
 
 impl Generator for CounterGen {
     fn gen(&mut self) -> Result<String, Box<dyn Error>> {
-        self.count += 1;
-        let mut wtr = csv::Writer::from_writer(vec![]);
-        wtr.serialize(CounterEntry {
+        let r = self.format.serialize(CounterEntry {
             time: get_current_time_iso8601(),
             count: self.count,
-        })?;
-        let inner = wtr.into_inner()?;
-        let data = String::from_utf8(inner)?;
-        return Ok(data);
+        });
+
+        self.count += 1;
+
+        return r;
     }
 }
 
