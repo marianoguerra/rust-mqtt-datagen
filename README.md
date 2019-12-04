@@ -62,6 +62,29 @@ datagen mqtt-gen -u mariano -p secret -t test -g counter -c resources/empty-conf
 datagen mqtt-gen -u mariano -p secret -t test -g counter -c resources/counter.toml
 ```
 
+## Config Examples
+
+### id event generator
+
+```
+ids = ["Main Entrance", "Meeting Room",
+       "Elevator Floor 1", "Elevator Floor 2", "Elevator Floor 3",
+       "Stairs Floor 1", "Stairs Floor 2", "Stairs Floor 3"]
+events = ["Open", "Close", "Enter", "Leave"]
+format = "CSV" # or "JSON"
+```
+
+See resources/id\_event.toml
+
+### counter generator
+
+```
+initial_count = 42
+format = "JSON" # or "CSV"
+```
+
+See resources/counter.toml
+
 ## Tips
 
 To test you need an MQTT broker, we recommend: https://vernemq.com/

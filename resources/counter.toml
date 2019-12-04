@@ -1,1 +1,2 @@
 initial_count = 42
+format = "JSON" # or "CSV"
