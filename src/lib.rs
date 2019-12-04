@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 pub trait Generator {
-    fn gen(&self) -> Result<String, Box<dyn Error>>;
+    fn gen(&mut self) -> Result<String, Box<dyn Error>>;
 }
 
 #[derive(Debug)]
@@ -40,7 +40,7 @@ struct IdEventEntry {
 }
 
 impl Generator for IdEventGen {
-    fn gen(&self) -> Result<String, Box<dyn Error>> {
+    fn gen(&mut self) -> Result<String, Box<dyn Error>> {
         let id = match self.ids.choose(&mut rand::thread_rng()) {
             Some(v) => v.to_string(),
             None => String::from("?"),
@@ -51,6 +51,39 @@ impl Generator for IdEventGen {
         };
         let mut wtr = csv::Writer::from_writer(vec![]);
         wtr.serialize(IdEventEntry { id, event })?;
+        let inner = wtr.into_inner()?;
+        let data = String::from_utf8(inner)?;
+        return Ok(data);
+    }
+}
+
+#[derive(Debug)]
+pub struct CounterGen {
+    count: u64,
+}
+
+impl CounterGen {
+    pub fn new() -> Self {
+        CounterGen { count: 0 }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CounterEntry {
+    time: String,
+    count: u64,
+}
+
+impl Generator for CounterGen {
+    fn gen(&mut self) -> Result<String, Box<dyn Error>> {
+        self.count += 1;
+        let mut wtr = csv::Writer::from_writer(vec![]);
+        let time = chrono::offset::Utc::now();
+        let time_str = time.format("%+");
+        wtr.serialize(CounterEntry {
+            time: time_str.to_string(),
+            count: self.count,
+        })?;
         let inner = wtr.into_inner()?;
         let data = String::from_utf8(inner)?;
         return Ok(data);
@@ -75,6 +108,7 @@ impl GenOpts {
         username: &str,
         password: &str,
         sleep_interval: Duration,
+        generator: Box<dyn Generator>,
     ) -> GenOpts {
         GenOpts {
             qos: 1,
@@ -83,8 +117,8 @@ impl GenOpts {
             authenticate: true,
             username: username.to_string(),
             password: password.to_string(),
-            generator: Box::new(IdEventGen::new()),
             sleep_interval: sleep_interval,
+            generator,
         }
     }
 
@@ -111,6 +145,7 @@ impl GenOpts {
 #[derive(Debug)]
 pub enum GenError {
     Unk(String),
+    NoGenerator(String),
     ConnInitErr(mqtt::errors::MqttError),
     ConnErr(mqtt::errors::MqttError),
 }
@@ -163,6 +198,13 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
                         .value_name("MS")
                         .takes_value(true)
                         .help("Sleep [interval] between messages"),
+                )
+                .arg(
+                    Arg::with_name("generator")
+                        .short("g")
+                        .value_name("GENERATOR_ID")
+                        .takes_value(true)
+                        .help("Generator type to use"),
                 ),
         )
         .get_matches();
@@ -179,17 +221,30 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
     let password = submatches.value_of("password").unwrap_or("mypassword");
     let sleep_interval_ms = value_t!(submatches, "interval", u64).unwrap_or(500);
     let sleep_interval = Duration::from_millis(sleep_interval_ms);
+    let gen_type = submatches.value_of("generator").unwrap_or("counter");
 
-    Ok(GenOpts::new(
-        host,
-        topic,
-        username,
-        password,
-        sleep_interval,
-    ))
+    match generator_from_id(gen_type) {
+        Some(generator) => Ok(GenOpts::new(
+            host,
+            topic,
+            username,
+            password,
+            sleep_interval,
+            generator,
+        )),
+        None => Err(GenError::NoGenerator(gen_type.to_string())),
+    }
 }
 
-pub fn gen(opts: GenOpts) -> Result<(), GenError> {
+fn generator_from_id(id: &str) -> Option<Box<dyn Generator>> {
+    match id {
+        "counter" => Some(Box::new(CounterGen::new())),
+        "id_event" => Some(Box::new(IdEventGen::new())),
+        _ => None,
+    }
+}
+
+pub fn gen(mut opts: GenOpts) -> Result<(), GenError> {
     println!("mqtt-gen {:}", opts.to_string());
     println!("Ctrl-c to quit");
 
