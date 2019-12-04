@@ -3,10 +3,12 @@ extern crate clap;
 use clap::{App, Arg, SubCommand};
 use paho_mqtt as mqtt;
 use rand::seq::SliceRandom;
-use serde_derive::Serialize;
+use serde_derive::{Deserialize, Serialize};
 
 use futures::Future;
 use std::error::Error;
+use std::fs::File;
+use std::io::{self, Read};
 use std::thread;
 use std::time::Duration;
 
@@ -31,6 +33,37 @@ impl IdEventGen {
             events: vec!["open".to_string(), "close".to_string(), "cross".to_string()],
         }
     }
+
+    fn from_config(config: IdEventConfig) -> Self {
+        Self {
+            ids: config.ids,
+            events: config.events,
+        }
+    }
+
+    pub fn from_file(path: Option<&str>) -> io::Result<Self> {
+        match path {
+            Some(path_s) => {
+                let content = read_file(path_s)?;
+                let config: IdEventConfig = toml::from_str(&content)?;
+                Ok(Self::from_config(config))
+            }
+            None => Ok(Self::new()),
+        }
+    }
+}
+
+fn read_file(path: &str) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    return Ok(content);
+}
+
+#[derive(Deserialize)]
+struct IdEventConfig {
+    ids: Vec<String>,
+    events: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,9 +100,31 @@ pub struct CounterGen {
     count: u64,
 }
 
+#[derive(Deserialize)]
+struct CounterConfig {
+    initial_count: Option<u64>,
+}
+
 impl CounterGen {
     pub fn new() -> Self {
         CounterGen { count: 0 }
+    }
+
+    fn from_config(config: CounterConfig) -> Self {
+        Self {
+            count: config.initial_count.unwrap_or(0),
+        }
+    }
+
+    pub fn from_file(path: Option<&str>) -> std::io::Result<Self> {
+        match path {
+            Some(path_s) => {
+                let content = read_file(path_s)?;
+                let config: CounterConfig = toml::from_str(&content)?;
+                Ok(Self::from_config(config))
+            }
+            None => Ok(Self::new()),
+        }
     }
 }
 
@@ -156,6 +211,7 @@ pub enum GenError {
     NoGenerator(String),
     ConnInitErr(mqtt::errors::MqttError),
     ConnErr(mqtt::errors::MqttError),
+    ConfigError(String, io::Error),
 }
 
 impl From<mqtt::errors::MqttError> for GenError {
@@ -213,6 +269,13 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
                         .value_name("GENERATOR_ID")
                         .takes_value(true)
                         .help("Generator type to use"),
+                )
+                .arg(
+                    Arg::with_name("generator-config")
+                        .short("c")
+                        .value_name("PATH")
+                        .takes_value(true)
+                        .help("Path to config file to setup generator"),
                 ),
         )
         .get_matches();
@@ -230,9 +293,10 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
     let sleep_interval_ms = value_t!(submatches, "interval", u64).unwrap_or(500);
     let sleep_interval = Duration::from_millis(sleep_interval_ms);
     let gen_type = submatches.value_of("generator").unwrap_or("counter");
+    let gen_config_path = submatches.value_of("generator-config");
 
-    match generator_from_id(gen_type) {
-        Some(generator) => Ok(GenOpts::new(
+    match generator_from_id(gen_type, gen_config_path) {
+        Ok(generator) => Ok(GenOpts::new(
             host,
             topic,
             username,
@@ -240,15 +304,21 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
             sleep_interval,
             generator,
         )),
-        None => Err(GenError::NoGenerator(gen_type.to_string())),
+        Err(err) => Err(err),
     }
 }
 
-fn generator_from_id(id: &str) -> Option<Box<dyn Generator>> {
+fn generator_from_id(id: &str, path: Option<&str>) -> Result<Box<dyn Generator>, GenError> {
     match id {
-        "counter" => Some(Box::new(CounterGen::new())),
-        "id_event" => Some(Box::new(IdEventGen::new())),
-        _ => None,
+        "counter" => match CounterGen::from_file(path) {
+            Ok(generator) => Ok(Box::new(generator)),
+            Err(err) => Err(GenError::ConfigError(path.unwrap_or("?").to_string(), err)),
+        },
+        "id_event" => match IdEventGen::from_file(path) {
+            Ok(generator) => Ok(Box::new(generator)),
+            Err(err) => Err(GenError::ConfigError(path.unwrap_or("?").to_string(), err)),
+        },
+        _ => Err(GenError::NoGenerator(id.to_string())),
     }
 }
 
