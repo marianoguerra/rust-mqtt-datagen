@@ -7,7 +7,6 @@ use serde_derive::Serialize;
 
 use futures::Future;
 use std::error::Error;
-use std::process;
 use std::thread;
 use std::time::Duration;
 
@@ -112,6 +111,14 @@ impl GenOpts {
 #[derive(Debug)]
 pub enum GenError {
     Unk(String),
+    ConnInitErr(mqtt::errors::MqttError),
+    ConnErr(mqtt::errors::MqttError),
+}
+
+impl From<mqtt::errors::MqttError> for GenError {
+    fn from(error: mqtt::errors::MqttError) -> GenError {
+        GenError::ConnErr(error)
+    }
 }
 
 pub fn parse_args() -> Result<GenOpts, GenError> {
@@ -182,21 +189,18 @@ pub fn parse_args() -> Result<GenOpts, GenError> {
     ))
 }
 
-pub fn gen(opts: GenOpts) {
+pub fn gen(opts: GenOpts) -> Result<(), GenError> {
     println!("mqtt-gen {:}", opts.to_string());
     println!("Ctrl-c to quit");
 
     let conn_opts = opts.to_conn_opts();
 
-    let cli = mqtt::AsyncClient::new(opts.host).unwrap_or_else(|err| {
-        println!("Error creating the client: {}", err);
-        process::exit(1);
-    });
+    let cli = mqtt::AsyncClient::new(opts.host)?;
 
     // Connect and wait for it to complete or fail
     if let Err(e) = cli.connect(conn_opts).wait() {
         println!("Unable to connect: {:?}", e);
-        process::exit(1);
+        return Err(GenError::ConnErr(e));
     }
 
     // Create a topic and publish to it
@@ -221,4 +225,5 @@ pub fn gen(opts: GenOpts) {
     // Disconnect from the broker
     let tok = cli.disconnect(None);
     tok.wait().unwrap();
+    return Ok(());
 }
