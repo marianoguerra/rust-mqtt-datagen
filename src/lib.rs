@@ -35,6 +35,7 @@ impl IdEventGen {
 
 #[derive(Debug, Serialize)]
 struct IdEventEntry {
+    time: String,
     id: String,
     event: String,
 }
@@ -50,7 +51,11 @@ impl Generator for IdEventGen {
             None => String::from("?"),
         };
         let mut wtr = csv::Writer::from_writer(vec![]);
-        wtr.serialize(IdEventEntry { id, event })?;
+        wtr.serialize(IdEventEntry {
+            time: get_current_time_iso8601(),
+            id,
+            event,
+        })?;
         let inner = wtr.into_inner()?;
         let data = String::from_utf8(inner)?;
         return Ok(data);
@@ -74,14 +79,17 @@ struct CounterEntry {
     count: u64,
 }
 
+fn get_current_time_iso8601() -> String {
+    let time = chrono::offset::Utc::now();
+    time.format("%+").to_string()
+}
+
 impl Generator for CounterGen {
     fn gen(&mut self) -> Result<String, Box<dyn Error>> {
         self.count += 1;
         let mut wtr = csv::Writer::from_writer(vec![]);
-        let time = chrono::offset::Utc::now();
-        let time_str = time.format("%+");
         wtr.serialize(CounterEntry {
-            time: time_str.to_string(),
+            time: get_current_time_iso8601(),
             count: self.count,
         })?;
         let inner = wtr.into_inner()?;
