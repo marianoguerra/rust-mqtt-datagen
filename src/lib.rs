@@ -173,7 +173,7 @@ struct CounterEntry {
 
 fn get_current_time_iso8601() -> String {
     let time = chrono::offset::Utc::now();
-    time.format("%+").to_string()
+    time.format("%FT%T%:z").to_string()
 }
 
 impl Generator for CounterGen {
